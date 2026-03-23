@@ -1,82 +1,55 @@
-# Network Port Scanner GUI
-
+Network Port Scanner GUI
 A lightweight TCP port scanner with a graphical user interface built with Python and Tkinter.
+Features
 
-## Features
+Simple 3-field interface – enter a target host, start port, and end port
+Multi-threaded scanning – up to 500 concurrent threads for fast results
+Service identification – automatically labels well-known ports (FTP, SSH, HTTP, HTTPS, MySQL, RDP, etc.)
+Real-time progress – progress bar and elapsed-time counter update live during a scan
+Stop at any time – cancel a running scan gracefully
+Save results – export discovered open ports to a .txt file
+Cross-platform – runs on Windows, macOS, and Linux
 
-- **Simple 3-field interface** – enter a target host, start port, and end port
-- **Multi-threaded scanning** – up to 500 concurrent threads for fast results
-- **Service identification** – automatically labels well-known ports (FTP, SSH, HTTP, HTTPS, MySQL, RDP, etc.)
-- **Real-time progress** – progress bar and elapsed-time counter update live during a scan
-- **Stop at any time** – cancel a running scan gracefully
-- **Save results** – export discovered open ports to a `.txt` file
-- **Cross-platform** – runs on Windows, macOS, and Linux
+Requirements
 
-## Requirements
+Python 3.7 or newer
+Tkinter (included in the standard Python distribution; on Debian/Ubuntu install python3-tk)
 
-- Python 3.7 or newer
-- Tkinter (included in the standard Python distribution; on Debian/Ubuntu install `python3-tk`)
 
 No third-party packages are required.
 
-## Installation
+Installation
+bashgit clone https://github.com/aarishkhan2361/network-port-scanner.git
+cd network-port-scanner
+Usage
+bashpython portscanergui.py
 
-```bash
-git clone https://github.com/techtrainer20/nmap_portscan_gui.git
-cd nmap_portscan_gui
-```
+Enter the Target – an IP address (e.g. 192.168.1.1) or hostname (e.g. scanme.nmap.org)
+Set the Start Port and End Port (defaults: 1 – 1024)
+Click Start Scan – open ports appear in real time in the results pane
+Click Stop to cancel a scan early
+After a scan completes, click Save Results to write the open-port list to a text file
 
-## Usage
+Detected Services
+PortService21FTP22SSH23Telnet25SMTP53DNS80HTTP110POP3143IMAP443HTTPS3306MySQL3389RDP5900VNC8080HTTP-Alt
 
-```bash
-python portscanergui.py
-```
+Ports not in the list are reported as Unknown.
 
-1. Enter the **Target** – an IP address (e.g. `192.168.1.1`) or hostname (e.g. `scanme.nmap.org`).
-2. Set the **Start Port** and **End Port** (defaults: `1` – `1024`).
-3. Click **Start Scan**. Open ports appear in real time in the results pane.
-4. Click **Stop** to cancel a scan early.
-5. After a scan completes, click **Save Results** to write the open-port list to a text file.
-
-## Detected Services
-
-The following ports are automatically labelled:
-
-| Port | Service   |
-|------|-----------|
-| 21   | FTP       |
-| 22   | SSH       |
-| 23   | Telnet    |
-| 25   | SMTP      |
-| 53   | DNS       |
-| 80   | HTTP      |
-| 110  | POP3      |
-| 143  | IMAP      |
-| 443  | HTTPS     |
-| 3306 | MySQL     |
-| 3389 | RDP       |
-| 5900 | VNC       |
-| 8080 | HTTP-Alt  |
-
-Ports not in the list are reported as `Unknown`.
-
-## Project Structure
-
-```
-nmap_portscan_gui/
+Project Structure
+network-port-scanner/
 ├── portscanergui.py   # Main application (scanner + GUI)
-└── README.md
-```
+├── README.md
+└── Network_Port_Scanner_Project_AarishKhan.pptx
+Disclaimer
 
-## Disclaimer
+⚠️ Use this tool only on hosts and networks you own or have explicit permission to scan.
+Unauthorized port scanning may be illegal in your jurisdiction.
 
-Use this tool only on hosts and networks you own or have explicit permission to scan. Unauthorized port scanning may be illegal in your jurisdiction.
+License
+This project is released under the MIT License.
+Credits
 
-## License
-
-This project is released under the [MIT License](https://opensource.org/licenses/MIT).
-
-## Credits
-- Original project by techtrainer20
-- Modified and submitted by Aarish Khan
-- Submitted for AICTE Internship 2026
+Original project by techtrainer20
+Modified and submitted by Aarish Khan
+AICTE ID: STU6823b63f41f6c1747170879
+Submitted for AICTE Internship 2026
