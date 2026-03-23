@@ -1,326 +1,270 @@
+# ============================================================
+#  Network Port Scanner GUI
+#  Author  : Aarish Khan
+#  AICTE ID: STU6823b63f41f6c1747170879
+#  Project : AICTE Internship 2026
+#  GitHub  : https://github.com/aarishkhan2361/network-port-scanner
+#  License : MIT License
+# ============================================================
+
+import tkinter as tk
+from tkinter import ttk, scrolledtext, messagebox, filedialog
 import socket
 import threading
 import time
 import queue
-import sys
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
 
-# ---------------------------
-# Service Map (extend freely)
-# ---------------------------
-COMMON_PORTS = {
-    21: 'FTP', 22: 'SSH', 23: 'Telnet', 25: 'SMTP', 53: 'DNS',
-    80: 'HTTP', 110: 'POP3', 143: 'IMAP', 443: 'HTTPS',
-    3306: 'MySQL', 3389: 'RDP', 5900: 'VNC', 8080: 'HTTP-Alt'
+# ── Well-known port → service name ──────────────────────────
+SERVICE_NAMES = {
+    21:   "FTP",
+    22:   "SSH",
+    23:   "Telnet",
+    25:   "SMTP",
+    53:   "DNS",
+    80:   "HTTP",
+    110:  "POP3",
+    143:  "IMAP",
+    443:  "HTTPS",
+    3306: "MySQL",
+    3389: "RDP",
+    5900: "VNC",
+    8080: "HTTP-Alt",
 }
 
-# ---------------------------
-# Scanner Worker
-# ---------------------------
-class PortScanner:
-    def __init__(self, target, start_port, end_port, timeout=0.5, max_workers=500):
-        self.target = target
-        self.start_port = start_port
-        self.end_port = end_port
-        self.timeout = timeout          # internal default
-        self.max_workers = max_workers  # internal default
+MAX_THREADS = 500          # concurrent scanning threads
+SOCKET_TIMEOUT = 0.5       # seconds per connection attempt
+
+
+class PortScannerApp:
+    def __init__(self, root: tk.Tk) -> None:
+        self.root = root
+        self.root.title("Network Port Scanner - Aarish Khan | AICTE 2026")
+        self.root.resizable(False, False)
+
         self._stop_event = threading.Event()
+        self._result_queue: queue.Queue = queue.Queue()
+        self._open_ports: list[int] = []
 
-        self.total_ports = max(0, end_port - start_port + 1)
-        self.scanned_count = 0
-        self.open_ports = []            # list[(port, service)]
-        self._lock = threading.Lock()
-        self.result_queue = queue.Queue()
+        self._build_ui()
 
-    def stop(self):
-        self._stop_event.set()
+    # ── UI construction ──────────────────────────────────────
+    def _build_ui(self) -> None:
+        pad = {"padx": 8, "pady": 4}
 
-    def _scan_port(self, port):
-        if self._stop_event.is_set():
+        # ── Scan Settings ────────────────────────────────────
+        settings = ttk.LabelFrame(self.root, text="Scan Settings")
+        settings.grid(row=0, column=0, columnspan=4, sticky="ew", **pad)
+
+        ttk.Label(settings, text="Target (IP / Hostname)").grid(
+            row=0, column=0, sticky="w", **pad)
+        self.target_var = tk.StringVar(value="8.8.8.8")
+        ttk.Entry(settings, textvariable=self.target_var, width=28).grid(
+            row=0, column=1, **pad)
+
+        ttk.Label(settings, text="Start").grid(row=0, column=2, sticky="w", **pad)
+        self.start_var = tk.StringVar(value="1")
+        ttk.Entry(settings, textvariable=self.start_var, width=7).grid(
+            row=0, column=3, **pad)
+
+        ttk.Label(settings, text="End Port:").grid(row=0, column=4, sticky="w", **pad)
+        self.end_var = tk.StringVar(value="1024")
+        ttk.Entry(settings, textvariable=self.end_var, width=7).grid(
+            row=0, column=5, **pad)
+
+        self.btn_start = ttk.Button(
+            settings, text="Start Scan", command=self._start_scan)
+        self.btn_start.grid(row=0, column=6, **pad)
+
+        self.btn_stop = ttk.Button(
+            settings, text="Stop", command=self._stop_scan, state="disabled")
+        self.btn_stop.grid(row=0, column=7, **pad)
+
+        self.btn_save = ttk.Button(
+            settings, text="Save Results", command=self._save_results, state="disabled")
+        self.btn_save.grid(row=0, column=8, **pad)
+
+        # ── Status ───────────────────────────────────────────
+        status_frame = ttk.LabelFrame(self.root, text="Status")
+        status_frame.grid(row=1, column=0, columnspan=4, sticky="ew", **pad)
+
+        self.status_var = tk.StringVar(value="Ready")
+        ttk.Label(status_frame, textvariable=self.status_var, width=12).grid(
+            row=0, column=0, **pad)
+
+        self.progress = ttk.Progressbar(
+            status_frame, orient="horizontal", length=460, mode="determinate")
+        self.progress.grid(row=0, column=1, **pad)
+
+        self.time_var = tk.StringVar(value="Elapsed: 0.00s")
+        ttk.Label(status_frame, textvariable=self.time_var).grid(
+            row=0, column=2, **pad)
+
+        # ── Open Ports ───────────────────────────────────────
+        results_frame = ttk.LabelFrame(self.root, text="Open Ports")
+        results_frame.grid(row=2, column=0, columnspan=4, **pad)
+
+        self.results_box = scrolledtext.ScrolledText(
+            results_frame, width=72, height=16, state="disabled",
+            font=("Courier", 10))
+        self.results_box.grid(row=0, column=0, **pad)
+
+    # ── Scan control ─────────────────────────────────────────
+    def _start_scan(self) -> None:
+        target = self.target_var.get().strip()
+        if not target:
+            messagebox.showerror("Error", "Please enter a target host.")
             return
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(self.timeout)
-            result = s.connect_ex((self.target, port))
-            if result == 0:
-                service = COMMON_PORTS.get(port, 'Unknown')
-                with self._lock:
-                    self.open_ports.append((port, service))
-                self.result_queue.put(('open', port, service))
-            s.close()
-        except Exception as e:
-            self.result_queue.put(('error', port, str(e)))
-        finally:
-            with self._lock:
-                self.scanned_count += 1
-            self.result_queue.put(('progress', self.scanned_count, self.total_ports))
+            start_port = int(self.start_var.get())
+            end_port   = int(self.end_var.get())
+            if not (1 <= start_port <= 65535 and 1 <= end_port <= 65535):
+                raise ValueError
+            if start_port > end_port:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror(
+                "Error", "Ports must be integers between 1 and 65535,\n"
+                         "and Start Port must be ≤ End Port.")
+            return
 
-    def resolve_target(self):
-        return socket.gethostbyname(self.target)
+        # Resolve hostname once
+        try:
+            ip = socket.gethostbyname(target)
+        except socket.gaierror:
+            messagebox.showerror("Error", f"Cannot resolve host: {target}")
+            return
 
-    def run(self):
-        sem = threading.Semaphore(self.max_workers)
+        self._open_ports.clear()
+        self._stop_event.clear()
+        self._clear_results()
+        self._append_result(
+            f"Target: {target} ({ip})\nRange: {start_port}-{end_port}\n\n")
+
+        total = end_port - start_port + 1
+        self.progress["maximum"] = total
+        self.progress["value"]   = 0
+        self.status_var.set("Scanning")
+        self.btn_start.config(state="disabled")
+        self.btn_stop.config(state="normal")
+        self.btn_save.config(state="disabled")
+
+        self._start_time = time.perf_counter()
+        self._scanned    = 0
+        self._total      = total
+
+        # Launch scanner thread
+        threading.Thread(
+            target=self._scan_worker,
+            args=(ip, start_port, end_port),
+            daemon=True
+        ).start()
+
+        # Start UI polling
+        self.root.after(100, self._poll_results)
+
+    def _stop_scan(self) -> None:
+        self._stop_event.set()
+
+    # ── Core scanning logic ──────────────────────────────────
+    def _scan_worker(self, ip: str, start: int, end: int) -> None:
+        sem = threading.Semaphore(MAX_THREADS)
         threads = []
 
-        for port in range(self.start_port, self.end_port + 1):
+        for port in range(start, end + 1):
             if self._stop_event.is_set():
                 break
             sem.acquire()
-            t = threading.Thread(target=self._worker_wrapper, args=(sem, port), daemon=True)
+            t = threading.Thread(
+                target=self._check_port,
+                args=(ip, port, sem),
+                daemon=True
+            )
             threads.append(t)
             t.start()
 
         for t in threads:
             t.join()
 
-        self.result_queue.put(('done', None, None))
+        self._result_queue.put(("DONE", None))
 
-    def _worker_wrapper(self, sem, port):
+    def _check_port(self, ip: str, port: int, sem: threading.Semaphore) -> None:
         try:
-            self._scan_port(port)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(SOCKET_TIMEOUT)
+                if s.connect_ex((ip, port)) == 0:
+                    service = SERVICE_NAMES.get(port, "Unknown")
+                    self._result_queue.put(("OPEN", (port, service)))
         finally:
             sem.release()
+            self._result_queue.put(("PROGRESS", None))
 
-# ---------------------------
-# Tkinter GUI (minimal inputs)
-# ---------------------------
-class ScannerGUI(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("Network Port Scanner - Minimal GUI")
-        self.geometry("720x520")
-        self.minsize(680, 480)
-
-        self.scanner_thread = None
-        self.scanner = None
-        self.start_time = None
-        self.poll_after_ms = 40
-
-        self._build_ui()
-
-    def _build_ui(self):
-        # --- Top Frame: Inputs (Only 3 fields) ---
-        frm_top = ttk.LabelFrame(self, text="Scan Settings")
-        frm_top.pack(fill="x", padx=10, pady=10)
-
-        ttk.Label(frm_top, text="Target (IP / Hostname):").grid(row=0, column=0, padx=8, pady=8, sticky="e")
-        self.ent_target = ttk.Entry(frm_top, width=36)
-        self.ent_target.grid(row=0, column=1, padx=8, pady=8, sticky="w")
-
-        ttk.Label(frm_top, text="Start Port:").grid(row=0, column=2, padx=8, pady=8, sticky="e")
-        self.ent_start = ttk.Entry(frm_top, width=10)
-        self.ent_start.insert(0, "1")
-        self.ent_start.grid(row=0, column=3, padx=8, pady=8, sticky="w")
-
-        ttk.Label(frm_top, text="End Port:").grid(row=0, column=4, padx=8, pady=8, sticky="e")
-        self.ent_end = ttk.Entry(frm_top, width=10)
-        self.ent_end.insert(0, "1024")
-        self.ent_end.grid(row=0, column=5, padx=8, pady=8, sticky="w")
-
-        self.btn_start = ttk.Button(frm_top, text="Start Scan", command=self.start_scan)
-        self.btn_start.grid(row=1, column=4, padx=8, pady=8, sticky="e")
-
-        self.btn_stop = ttk.Button(frm_top, text="Stop", command=self.stop_scan, state="disabled")
-        self.btn_stop.grid(row=1, column=5, padx=8, pady=8, sticky="w")
-
-        for i in range(6):
-            frm_top.grid_columnconfigure(i, weight=1)
-
-        # --- Progress / Status ---
-        frm_status = ttk.LabelFrame(self, text="Status")
-        frm_status.pack(fill="x", padx=10, pady=(0,10))
-
-        self.var_status = tk.StringVar(value="Idle")
-        self.lbl_status = ttk.Label(frm_status, textvariable=self.var_status)
-        self.lbl_status.pack(side="left", padx=10, pady=8)
-
-        self.var_elapsed = tk.StringVar(value="Elapsed: 0.00s")
-        self.lbl_elapsed = ttk.Label(frm_status, textvariable=self.var_elapsed)
-        self.lbl_elapsed.pack(side="right", padx=10, pady=8)
-
-        self.progress = ttk.Progressbar(frm_status, orient="horizontal", mode="determinate")
-        self.progress.pack(fill="x", padx=10, pady=(0,10))
-
-        # --- Results ---
-        frm_results = ttk.LabelFrame(self, text="Open Ports")
-        frm_results.pack(fill="both", expand=True, padx=10, pady=(0,10))
-
-        self.txt_results = tk.Text(frm_results, height=16, wrap="none")
-        self.txt_results.pack(fill="both", expand=True, side="left", padx=(10,0), pady=10)
-
-        yscroll = ttk.Scrollbar(frm_results, orient="vertical", command=self.txt_results.yview)
-        yscroll.pack(side="right", fill="y", pady=10)
-        self.txt_results.configure(yscrollcommand=yscroll.set)
-
-        xscroll = ttk.Scrollbar(self, orient="horizontal", command=self.txt_results.xview)
-        xscroll.pack(fill="x", padx=10, pady=(0,10))
-        self.txt_results.configure(xscrollcommand=xscroll.set)
-
-        # --- Bottom Buttons ---
-        frm_bottom = ttk.Frame(self)
-        frm_bottom.pack(fill="x", padx=10, pady=(0,12))
-
-        self.btn_clear = ttk.Button(frm_bottom, text="Clear", command=self.clear_results)
-        self.btn_clear.pack(side="left")
-
-        self.btn_save = ttk.Button(frm_bottom, text="Save Results", command=self.save_results, state="disabled")
-        self.btn_save.pack(side="right")
-
-    # -----------------------
-    # Control Handlers
-    # -----------------------
-    def start_scan(self):
-        if self.scanner_thread and self.scanner_thread.is_alive():
-            messagebox.showinfo("Scanner", "A scan is already running.")
-            return
-
-        target = self.ent_target.get().strip()
-        if not target:
-            messagebox.showerror("Input Error", "Please enter a target IP or hostname.")
-            return
-
-        try:
-            start_port = int(self.ent_start.get().strip())
-            end_port = int(self.ent_end.get().strip())
-        except ValueError:
-            messagebox.showerror("Input Error", "Ports must be integers.")
-            return
-
-        if not (0 <= start_port <= 65535 and 0 <= end_port <= 65535 and start_port <= end_port):
-            messagebox.showerror("Input Error", "Port range must be within 0–65535 and start ≤ end.")
-            return
-
-        # Internal defaults (not shown in UI)
-        timeout = 0.5
-        max_threads = 500
-
-        self.scanner = PortScanner(target, start_port, end_port, timeout=timeout, max_workers=max_threads)
-
-        # Pre-resolve target to catch DNS issues early
-        try:
-            resolved_ip = self.scanner.resolve_target()
-            self.append_text(f"Target: {target} ({resolved_ip})\n")
-            self.append_text(f"Range: {start_port}-{end_port}\n\n")
-        except Exception as e:
-            messagebox.showerror("Resolution Error", f"Failed to resolve target '{target}'.\n{e}")
-            self.scanner = None
-            return
-
-        self.btn_start.configure(state="disabled")
-        self.btn_stop.configure(state="normal")
-        self.btn_save.configure(state="disabled")
-        self.clear_progress()
-
-        self.start_time = time.time()
-        self.var_status.set("Scanning...")
-        self.update_elapsed()
-
-        self.scanner_thread = threading.Thread(target=self.scanner.run, daemon=True)
-        self.scanner_thread.start()
-
-        self.after(self.poll_after_ms, self.poll_results)
-
-    def stop_scan(self):
-        if self.scanner:
-            self.scanner.stop()
-            self.var_status.set("Stopping...")
-
-    def clear_results(self):
-        self.txt_results.delete("1.0", tk.END)
-        self.clear_progress()
-        self.var_status.set("Idle")
-        self.var_elapsed.set("Elapsed: 0.00s")
-        self.btn_save.configure(state="disabled")
-
-    def save_results(self):
-        if not self.scanner or not self.scanner.open_ports:
-            messagebox.showinfo("Save Results", "No open ports to save.")
-            return
-
-        default_name = f"open_ports_{int(time.time())}.txt"
-        file_path = filedialog.asksaveasfilename(
-            title="Save results",
-            defaultextension=".txt",
-            initialfile=default_name,
-            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
-        )
-        if not file_path:
-            return
-
-        try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write("Open Ports:\n")
-                for port, service in sorted(self.scanner.open_ports, key=lambda x: x[0]):
-                    f.write(f"Port {port} ({service}) is open\n")
-            messagebox.showinfo("Saved", f"Results saved to:\n{file_path}")
-        except Exception as e:
-            messagebox.showerror("Save Error", f"Failed to save file.\n{e}")
-
-    # -----------------------
-    # UI Helpers
-    # -----------------------
-    def append_text(self, text):
-        self.txt_results.insert(tk.END, text)
-        self.txt_results.see(tk.END)
-
-    def clear_progress(self):
-        self.progress.configure(value=0, maximum=1)
-
-    def update_elapsed(self):
-        if self.start_time and self.var_status.get() in ("Scanning...", "Stopping..."):
-            elapsed = time.time() - self.start_time
-            self.var_elapsed.set(f"Elapsed: {elapsed:.2f}s")
-            self.after(200, self.update_elapsed)
-
-    def poll_results(self):
-        if not self.scanner:
-            return
-
+    # ── UI update loop ───────────────────────────────────────
+    def _poll_results(self) -> None:
         try:
             while True:
-                msg_type, a, b = self.scanner.result_queue.get_nowait()
-                if msg_type == 'open':
-                    port, service = a, b
-                    self.append_text(f"[+] Port {port} ({service}) is open\n")
-                elif msg_type == 'progress':
-                    scanned, total = a, b
-                    self.progress.configure(maximum=max(total, 1), value=scanned)
-                    self.var_status.set(f"Scanning... {scanned}/{total}")
-                elif msg_type == 'done':
-                    total_open = len(self.scanner.open_ports)
-                    self.append_text("\nScan complete.\n")
-                    self.append_text(f"Open ports found: {total_open}\n")
-                    self.var_status.set("Completed")
-                    self.btn_start.configure(state="normal")
-                    self.btn_stop.configure(state="disabled")
-                    self.btn_save.configure(state="normal" if total_open else "disabled")
-                    self.start_time = None
+                msg, data = self._result_queue.get_nowait()
+
+                if msg == "OPEN":
+                    port, service = data
+                    self._open_ports.append(port)
+                    self._append_result(f"[+] Port {port} ({service}) is open\n")
+
+                elif msg == "PROGRESS":
+                    self._scanned += 1
+                    self.progress["value"] = self._scanned
+                    elapsed = time.perf_counter() - self._start_time
+                    self.time_var.set(f"Elapsed: {elapsed:.2f}s")
+
+                elif msg == "DONE":
+                    self._scan_finished()
+                    return
+
         except queue.Empty:
             pass
 
-        if self.scanner_thread and self.scanner_thread.is_alive():
-            self.after(self.poll_after_ms, self.poll_results)
-        else:
-            if self.var_status.get() in ("Scanning...", "Stopping..."):
-                self.var_status.set("Completed")
-            self.btn_start.configure(state="normal")
-            self.btn_stop.configure(state="disabled")
-            if self.scanner and self.scanner.open_ports:
-                self.btn_save.configure(state="normal")
+        self.root.after(100, self._poll_results)
 
-def main():
-    # Windows console nicety if launched from terminal
-    if sys.platform.startswith("win"):
-        try:
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            kernel32.SetConsoleMode(kernel32.GetStdHandle(-10), 7)
-        except Exception:
-            pass
+    def _scan_finished(self) -> None:
+        elapsed = time.perf_counter() - self._start_time
+        count   = len(self._open_ports)
+        self._append_result(
+            f"\nScan complete.\nOpen ports found: {count}\n")
+        self.status_var.set("Completed")
+        self.time_var.set(f"Elapsed: {elapsed:.2f}s")
+        self.progress["value"] = self._total
+        self.btn_start.config(state="normal")
+        self.btn_stop.config(state="disabled")
+        if count:
+            self.btn_save.config(state="normal")
 
-    app = ScannerGUI()
-    app.mainloop()
+    # ── Results text helpers ─────────────────────────────────
+    def _append_result(self, text: str) -> None:
+        self.results_box.config(state="normal")
+        self.results_box.insert(tk.END, text)
+        self.results_box.see(tk.END)
+        self.results_box.config(state="disabled")
 
+    def _clear_results(self) -> None:
+        self.results_box.config(state="normal")
+        self.results_box.delete("1.0", tk.END)
+        self.results_box.config(state="disabled")
+
+    # ── Save results ─────────────────────────────────────────
+    def _save_results(self) -> None:
+        path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            title="Save scan results"
+        )
+        if not path:
+            return
+        with open(path, "w") as f:
+            f.write(self.results_box.get("1.0", tk.END))
+        messagebox.showinfo("Saved", f"Results saved to:\n{path}")
+
+
+# ── Entry point ──────────────────────────────────────────────
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    app = PortScannerApp(root)
+    root.mainloop()
