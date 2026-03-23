@@ -75,3 +75,8 @@ Use this tool only on hosts and networks you own or have explicit permission to 
 ## License
 
 This project is released under the [MIT License](https://opensource.org/licenses/MIT).
+
+## Credits
+- Original project by techtrainer20
+- Modified and submitted by Aarish Khan
+- Submitted for AICTE Internship 2026
